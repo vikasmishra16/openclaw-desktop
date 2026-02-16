@@ -1,0 +1,9 @@
+Config was last written by a newer OpenClaw (2026.2.14); current version is 2026.2.13.
+Config was last written by a newer OpenClaw (2026.2.14); current version is 2026.2.13.
+Config was last written by a newer OpenClaw (2026.2.14); current version is 2026.2.13.
+Config was last written by a newer OpenClaw (2026.2.14); current version is 2026.2.13.
+Error: gateway closed (1006 abnormal closure (no close frame)): no close reason
+Gateway target: ws://127.0.0.1:18789
+Source: local loopback
+Config: C:\Users\Vineet Kumar Mishra\.openclaw\openclaw.json
+Bind: loopback

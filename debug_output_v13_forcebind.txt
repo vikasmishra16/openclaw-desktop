@@ -1,0 +1,25 @@
+Invalid config at C:\Users\Vineet Kumar Mishra\.openclaw\openclaw.json:\n- <root>: Unrecognized key: "bind"
+[90m│[39m
+[32m◇[39m  [0mConfig[0m [90m───────────────────────────────────────────────────╮[39m
+[90m│[39m                                                            [90m│[39m
+[90m│[39m  [2mConfig invalid; doctor will run with best-effort config.[22m  [90m│[39m
+[90m│[39m                                                            [90m│[39m
+[90m├────────────────────────────────────────────────────────────╯[39m
+[90m│[39m
+[32m◇[39m  [0mUnknown config keys[0m [90m─╮[39m
+[90m│[39m                       [90m│[39m
+[90m│[39m  [2m- bind[22m               [90m│[39m
+[90m│[39m                       [90m│[39m
+[90m├───────────────────────╯[39m
+[90m│[39m
+[32m◇[39m  [0mDoctor[0m [90m────────────────────────────────────────────╮[39m
+[90m│[39m                                                     [90m│[39m
+[90m│[39m  [2mRun "openclaw doctor --fix" to remove these keys.[22m  [90m│[39m
+[90m│[39m                                                     [90m│[39m
+[90m├─────────────────────────────────────────────────────╯[39m
+Config invalid
+File: ~\.openclaw\openclaw.json
+Problem:
+  - <root>: Unrecognized key: "bind"
+
+Run: openclaw doctor --fix

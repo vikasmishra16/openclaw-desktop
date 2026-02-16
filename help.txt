@@ -1,0 +1,9 @@
+
+🦞 OpenClaw 2026.2.13 (203b5bd) — Chat APIs that don't require a Senate hearing.
+
+Usage: openclaw browser start [options]
+
+Start the browser (no-op if already running)
+
+Options:
+  -h, --help  display help for command
