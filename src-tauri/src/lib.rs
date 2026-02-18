@@ -1,10 +1,13 @@
 // src-tauri/src/lib.rs
+mod scheduler;
+
 use tauri::{command, Manager, State};
 use std::process::Command;
 use serde::{Deserialize, Serialize};
 use rusqlite::{params, Connection, Result as SqlResult};
 use std::sync::Mutex;
-
+use std::time::Duration;
+use crate::scheduler::{SchedulerManager, CronJobDef};
 
 // ================= DATABASE =================
 
@@ -12,14 +15,7 @@ struct DbState {
     conn: Mutex<Connection>,
 }
 
-#[derive(Serialize, Deserialize)]
-struct ChatRequest {
-    model: String,
-    messages: Vec<Message>,
-    stream: bool,
-}
-
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Clone)]
 struct Message {
     role: String,
     content: String,
@@ -62,6 +58,15 @@ fn init_db(app_handle: &tauri::AppHandle) -> SqlResult<Connection> {
         [],
     )?;
 
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS chat_messages (
+            id INTEGER PRIMARY KEY,
+            messages_json TEXT NOT NULL,
+            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        )",
+        [],
+    )?;
+
     Ok(conn)
 }
 
@@ -93,6 +98,17 @@ fn get_logs(state: State<DbState>) -> Result<Vec<LogEntry>, String> {
 }
 
 #[command]
+fn log_action(command_str: String, output_str: String, state: State<DbState>) -> Result<(), String> {
+    let conn = state.conn.lock().map_err(|e| e.to_string())?;
+    conn.execute(
+        "INSERT INTO logs (command, output) VALUES (?1, ?2)",
+        params![command_str, output_str],
+    )
+    .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+#[command]
 fn save_api_key(key: String, state: State<DbState>) -> Result<(), String> {
     let conn = state.conn.lock().map_err(|e| e.to_string())?;
     conn.execute(
@@ -119,64 +135,105 @@ fn get_api_key(state: State<DbState>) -> Result<String, String> {
     }
 }
 
-// ================= 🧠 LLM (HARDENED) =================
+// ================= CHAT PERSISTENCE =================
+
+#[command]
+fn save_messages(messages_json: String, state: State<DbState>) -> Result<(), String> {
+    let conn = state.conn.lock().map_err(|e| e.to_string())?;
+    // Always update row 1 (single conversation slot)
+    conn.execute(
+        "INSERT OR REPLACE INTO chat_messages (id, messages_json) VALUES (1, ?1)",
+        params![messages_json],
+    )
+    .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+#[command]
+fn load_messages(state: State<DbState>) -> Result<String, String> {
+    let conn = state.conn.lock().map_err(|e| e.to_string())?;
+    let mut stmt = conn
+        .prepare("SELECT messages_json FROM chat_messages WHERE id = 1")
+        .map_err(|e| e.to_string())?;
+
+    let mut rows = stmt.query([]).map_err(|e| e.to_string())?;
+
+    if let Some(row) = rows.next().map_err(|e| e.to_string())? {
+        Ok(row.get(0).map_err(|e| e.to_string())?)
+    } else {
+        Ok("[]".to_string())
+    }
+}
+
+// ================= HEALTH CHECK =================
+
+#[command]
+async fn check_ollama() -> Result<String, String> {
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(5))
+        .build()
+        .map_err(|e| e.to_string())?;
+
+    let res = client
+        .get("http://localhost:11434/api/tags")
+        .send()
+        .await
+        .map_err(|e| format!("Ollama not reachable: {}", e))?;
+
+    let body: serde_json::Value = res.json().await.map_err(|e| e.to_string())?;
+    Ok(serde_json::to_string(&body).unwrap_or_default())
+}
+
+// ================= 🧠 LLM (JSON MODE) =================
 
 #[command]
 async fn send_chat(prompt: String, api_key: Option<String>) -> Result<String, String> {
-    let client = reqwest::Client::new();
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(120)) // 120s: first call loads model into VRAM
+        .build()
+        .map_err(|e| e.to_string())?;
 
-    // 🔥 HARD SYSTEM PROMPT (VERY IMPORTANT)
+    // 🔥 STRICT JSON SYSTEM PROMPT
     let system_prompt = r#"You are OpenClaw Desktop Assistant.
+You control a browser automation engine and a scheduler.
+You MUST output strictly Valid JSON. No markdown, no explanations outside JSON.
 
-STRICT RULES — MUST FOLLOW:
+FORMAT:
+{
+  "thought": "Your reasoning...",
+  "action": "reply" | "browser" | "schedule",
+  "payload": { ... }
+}
 
-WHEN USER ASKS TO:
+ACTIONS:
+1. "reply": Just answering the user.
+   Payload: { "text": "Hello! How can I help?" }
 
-- Draft / Preview / Find trends → WRITE NORMAL TEXT ONLY (NO COMMANDS)
-- Approve / Post / Schedule / Create agent → OUTPUT ONLY VALID OPENCLAW COMMANDS
+2. "browser": Execute a browser task.
+   Payload: { 
+     "task": "post_linkedin" | "search_linkedin" | "interact_linkedin", 
+     "content": "Post text...", 
+     "instruction": "like the first post",
+     "query": "search query",
+     "confirm": true 
+   }
 
-━━━━━━━━━━━━━━━━━━
-CRITICAL SYNTAX RULES
-━━━━━━━━━━━━━━━━━━
+3. "schedule": Schedule a recurring task.
+   Payload: { 
+     "cron": "0 0 9 * * *", 
+     "job_name": "Daily Post", 
+     "task_type": "browser", 
+     "task_payload": { "task": "post_linkedin", "content": "Daily update" } 
+   }
+   IMPORTANT: Cron MUST be 6-field with seconds: "sec min hour day month weekday"
+   Example: "0 0 9 * * *" = daily at 9 AM, "0 */30 * * * *" = every 30 min
 
-You MUST:
-
-- Output ONE command per line
-- Use ONLY real OpenClaw commands
-- Use ONLY these namespaces:
-  • openclaw agents add
-  • openclaw agents list
-  • openclaw cron add
-  • openclaw browser open
-  • openclaw browser type
-  • openclaw browser click
-
-NEVER USE:
-
-- openclaw agent --agent
-- openclaw selector
-- openclaw click
-- openclaw agents get
-- comments (#)
-- backslashes (\)
-- &&
-- placeholders like AGENT_ID
-- invented URLs
-- extra explanations
-
-━━━━━━━━━━━━━━━━━━
-CORRECT EXAMPLES
-━━━━━━━━━━━━━━━━━━
-
-openclaw agents add TrendingTopicAgent --non-interactive --workspace ./TrendingTopicAgent
-
-openclaw cron add --name DailyPost --cron "0 9 * * *" --agent trendytopicagent --message "Run"
-
-openclaw browser open "https://linkedin.com/"
-openclaw browser type textarea "My post"
-openclaw browser click button[type=submit]
-
-If unsure → output NOTHING."#;
+IMPORTANT RULES:
+- If the user wants to post, search, like, or do anything on LinkedIn → use action "browser"
+- If the user wants something scheduled or repeated → use action "schedule"  
+- If the user is just asking a question → use action "reply"
+- ALWAYS include "thought" explaining your reasoning
+- NEVER output markdown. ONLY valid JSON."#;
 
     let messages = vec![
         Message {
@@ -189,92 +246,118 @@ If unsure → output NOTHING."#;
         },
     ];
 
-    // ===== CLOUD =====
-    if let Some(key) = api_key {
+    // ===== CLOUD (OpenAI) =====
+    if let Some(ref key) = api_key {
         if !key.is_empty() {
             let res = client
                 .post("https://api.openai.com/v1/chat/completions")
                 .header("Authorization", format!("Bearer {}", key))
                 .json(&serde_json::json!({
-                    "model": "gpt-4-turbo",
-                    "messages": messages
+                    "model": "gpt-4o-mini",
+                    "messages": messages,
+                    "response_format": { "type": "json_object" }
                 }))
                 .send()
                 .await
-                .map_err(|e| e.to_string())?;
+                .map_err(|e| format!("OpenAI request failed: {}", e))?;
 
             let body: serde_json::Value =
-                res.json().await.map_err(|e| e.to_string())?;
+                res.json().await.map_err(|e| format!("OpenAI response parse error: {}", e))?;
+
+            if let Some(error) = body.get("error") {
+                return Err(format!("OpenAI API Error: {}", error));
+            }
 
             return Ok(body["choices"][0]["message"]["content"]
                 .as_str()
-                .unwrap_or("Error parsing API")
+                .unwrap_or("{\"action\":\"reply\",\"payload\":{\"text\":\"Error parsing API response\"}}")
                 .to_string());
         }
     }
 
-    // ===== LOCAL OLLAMA =====
+    // ===== LOCAL (Ollama) =====
     let res = client
         .post("http://localhost:11434/api/chat")
-        .json(&ChatRequest {
-            model: "llama3:8b".to_string(),
-            messages,
-            stream: false,
-        })
+        .json(&serde_json::json!({
+            "model": "llama3:8b",
+            "messages": messages,
+            "stream": false,
+            "format": "json"
+        }))
         .send()
         .await
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| format!("Ollama request failed (is Ollama running?): {}", e))?;
 
     let body: serde_json::Value =
-        res.json().await.map_err(|e| e.to_string())?;
+        res.json().await.map_err(|e| format!("Ollama response parse error: {}", e))?;
 
     Ok(body["message"]["content"]
         .as_str()
-        .unwrap_or("Error parsing Local LLM")
+        .unwrap_or("{\"action\":\"reply\",\"payload\":{\"text\":\"Error parsing Local LLM\"}}")
         .to_string())
 }
 
-// ================= 🚀 EXECUTOR (STABLE) =================
+// ================= 🚀 ROBUST EXECUTOR =================
 
 #[command]
-fn run_openclaw_command(command_str: String, state: State<DbState>) -> String {
-    #[cfg(target_os = "windows")]
-    let output = Command::new("powershell")
-        .arg("-NoProfile")
-        .arg("-Command")
-        .arg(&command_str) // ✅ PowerShell preserves quotes
-        .output();
+async fn run_browser_action(payload: String) -> Result<String, String> {
+    // Resolve script path relative to the executable's directory
+    let exe_dir = std::env::current_exe()
+        .map_err(|e| format!("Cannot find executable path: {}", e))?
+        .parent()
+        .ok_or("Cannot find executable directory")?
+        .to_path_buf();
 
-    #[cfg(not(target_os = "windows"))]
-    let output = Command::new("sh")
-        .arg("-c")
-        .arg(&command_str)
-        .output();
+    // Try multiple candidate paths for the browser script
+    let candidates = vec![
+        exe_dir.join("../scripts/browser-automator.js"),
+        exe_dir.join("../../scripts/browser-automator.js"),
+        exe_dir.join("../../../scripts/browser-automator.js"),
+        std::path::PathBuf::from("scripts/browser-automator.js"),
+        std::path::PathBuf::from("../scripts/browser-automator.js"),
+    ];
 
-    let result = match output {
+    let script_path = candidates
+        .iter()
+        .find(|p| p.exists())
+        .ok_or_else(|| format!(
+            "Browser script not found. Searched: {:?}",
+            candidates.iter().map(|p| p.display().to_string()).collect::<Vec<_>>()
+        ))?
+        .to_path_buf();
+
+    let mut cmd = Command::new("node");
+    cmd.arg(&script_path)
+       .env("BROWSER_PAYLOAD", &payload);
+
+    let output = cmd.output();
+
+    match output {
         Ok(o) => {
             let stdout = String::from_utf8_lossy(&o.stdout).to_string();
-            if stdout.trim().is_empty() {
-                String::from_utf8_lossy(&o.stderr).to_string()
-            } else {
-                stdout
+            let stderr = String::from_utf8_lossy(&o.stderr).to_string();
+            
+            if !o.status.success() {
+                return Err(format!("Script failed: {}{}", stdout, stderr));
             }
+            
+            if !stderr.is_empty() && stdout.trim().is_empty() {
+                return Err(stderr);
+            }
+            Ok(stdout)
         }
-        Err(e) => format!("Failed to execute: {}", e),
-    };
-
-    // logging
-    if let Ok(conn) = state.conn.lock() {
-        let _ = conn.execute(
-            "INSERT INTO logs (command, output) VALUES (?1, ?2)",
-            params![command_str, result],
-        );
+        Err(e) => Err(format!("Failed to launch browser script: {}", e)),
     }
-
-    result
 }
 
-
+#[command]
+async fn schedule_job(
+    scheduler: State<'_, SchedulerManager>,
+    app: tauri::AppHandle,
+    job_def: CronJobDef
+) -> Result<String, String> {
+    scheduler.add_job(app, job_def).await
+}
 
 // ================= APP =================
 
@@ -287,14 +370,24 @@ pub fn run() {
             app.manage(DbState {
                 conn: Mutex::new(conn),
             });
+            
+            // Initialize Scheduler
+            let scheduler = tauri::async_runtime::block_on(SchedulerManager::new());
+            app.manage(scheduler);
+
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
             send_chat,
-            run_openclaw_command,
+            run_browser_action,
+            schedule_job,
             get_logs,
+            log_action,
             save_api_key,
-            get_api_key
+            get_api_key,
+            save_messages,
+            load_messages,
+            check_ollama
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

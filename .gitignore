@@ -22,3 +22,9 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# Browser automation session (contains login cookies)
+.browser-state.json
+
+# DevContext - AI coding context
+.devctx/
