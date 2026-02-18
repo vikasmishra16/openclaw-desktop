@@ -1,0 +1,57 @@
+# ============================================================
+# OpenClaw Desktop — Dependency Requirements
+# ============================================================
+# This project uses npm (Node.js) and Cargo (Rust) for
+# dependency management. Run the install commands below.
+# ============================================================
+
+# ==================== SYSTEM PREREQUISITES ====================
+# Install these before setting up the project:
+#
+# 1. Node.js >= 18.x          https://nodejs.org/
+# 2. Rust (stable toolchain)  https://rustup.rs/
+# 3. Ollama (local LLM)       https://ollama.ai/
+#    Run: ollama pull llama3
+# 4. Google Chrome             (for Playwright browser automation)
+
+# ==================== NODE.JS DEPENDENCIES ====================
+# Install with: npm install
+#
+# --- Runtime ---
+# @tauri-apps/api          ^2.10.1    # Tauri frontend API
+# @tauri-apps/plugin-opener ^2        # OS opener plugin
+# lucide-react             ^0.564.0   # Icon library
+# playwright               ^1.58.2    # Browser automation engine
+# react                    ^19.1.0    # UI framework
+# react-dom                ^19.1.0    # React DOM renderer
+# react-markdown           ^10.1.0    # Markdown rendering
+#
+# --- Dev ---
+# @tauri-apps/cli          ^2         # Tauri CLI tools
+# @types/react             ^19.1.8    # TypeScript types
+# @types/react-dom         ^19.1.6    # TypeScript types
+# @vitejs/plugin-react     ^4.6.0     # Vite React plugin
+# autoprefixer             ^10.4.24   # CSS autoprefixer
+# postcss                  ^8.5.6     # CSS processor
+# tailwindcss              ^4.1.18    # Utility CSS framework
+# typescript               ~5.8.3     # TypeScript compiler
+# vite                     ^7.0.4     # Build tool
+
+# ==================== RUST DEPENDENCIES =======================
+# Installed automatically via: cargo build
+#
+# tauri                    2.0.0      # Desktop app framework
+# tauri-plugin-opener      2          # OS file opener
+# serde / serde_json       1          # Serialization
+# reqwest                  0.11       # HTTP client (LLM API)
+# tokio                    1          # Async runtime
+# rusqlite                 0.31       # SQLite database
+# tokio-cron-scheduler     0.9.4      # Cron job scheduler
+# chrono                   0.4        # Date/time utilities
+
+# ==================== QUICK SETUP =============================
+# git clone https://github.com/vikasmishra16/openclaw-desktop.git
+# cd openclaw-desktop
+# npm install
+# npx playwright install chromium
+# npm run tauri dev
