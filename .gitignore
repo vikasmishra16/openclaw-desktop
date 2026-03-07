@@ -28,3 +28,10 @@ dist-ssr
 
 # DevContext - AI coding context
 .devctx/
+
+# Debug and help files
+debug_output*.txt
+*_help.txt
+*_help_utf8.txt
+help.txt
+openclaw_help.txt
